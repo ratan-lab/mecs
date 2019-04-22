@@ -2,8 +2,9 @@
 
 An implementation of the bioinformatics methods detailed at https://www.jove.com/video/57509/rare-event-detection-using-error-corrected-dna-and-rna-sequencing to call variants from error corrected DNA sequences.
 
-Briefly, the following steps are implemented given fastq files for all samples and their replicates from the Illumina sequencer.
+Multiple samples are sequenced to high coverage using targeted capture, and paired-end fastq files are generated for each of them. The following analysis is done on each one of them to generate a BAM file for each of them. The final SNP calls are generated based on the error-profile that is based on all the alignment files.
 
+For each sample:
 * Trim off the first 30 nucleotides of each demultiplexed read to remove oligo sequences from the gene panel.
 * Align the reads to the human reference genome using BWA
 * Process the alignment to identify and align reads that share the same UMIs to one another to form read families.
