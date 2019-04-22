@@ -9,7 +9,7 @@ For each sample:
 * Align the reads to the human reference genome using BWA
 * Process the alignment to identify and align reads that share the same UMIs to one another to form read families.
 * Perform de-duplication and error-correction using the following recommended parameters.
-  * Use ≥5 read pairs in the same read family. A minimum of three read pairs is recommended.
+  * Use ≥5 read pairs in the same read family.
   * Compare nucleotide at every position across all reads in the same read family, and generate a consensus nucleotide if there is at least 90% concordance among the reads for the particular nucleotide. Call an N if there is less than 90% agreement for the nucleotide position.
   * Discard consensus reads that have >10% of the total number of consensus nucleotides being called as N.
 * Align all retained consensus reads locally to either hg19 or hg38 human reference genome using researcher’s preferred aligner(s) such as Bowtie2 and BWA.
