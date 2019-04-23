@@ -3,7 +3,7 @@
 from sys import argv, stderr, stdout
 from collections import Counter
 from copy import deepcopy
-from getopt import getopt, GetoptError
+from getopt import gnu_getopt, GetoptError
 import pysam as ps
 import numpy as np
 
@@ -184,7 +184,7 @@ def print_help():
 
 if __name__ == "__main__":
     try:
-        opts, args = getopt(argv, "o:t:h", ["output=", "threads=", "help"])
+        opts, args = gnu_getopt(argv, "o:t:h", ["output=", "threads=", "help"])
     except GetoptError:
         print_help()
         exit(2)
@@ -200,7 +200,11 @@ if __name__ == "__main__":
             outfile = open(arg, 'w')
         elif opt in ["-t", "--threads"]:
             threads = int(arg)
-            
-    main(outfile, threads, argv[1], argv[2])
+     
+    if len(args) != 3:
+        print_help()
+        exit(2)
+
+    main(outfile, threads, args[1], args[2])
     if outfile != stdout: outfile.close()
 
