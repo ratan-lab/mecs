@@ -97,10 +97,12 @@ task get_consensus_reads {
   File bamfile
   Int threads
 
-  String outfile = outprefix + ".fa"
+  String tempfile = outprefix + ".fa"
+  String outfile = outprefix + ".flt.fa"
 
   command <<<
-    python get_consensus_reads -o ${outfile} -t ${threads} ${target} ${bamfile}
+    python get_consensus_reads -o ${tempfile} -t ${threads} ${target} ${bamfile}
+    python filter_consensus -o ${outfile} ${tempfile}
   >>>
 
   output {

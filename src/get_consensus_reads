@@ -4,6 +4,7 @@ from sys import argv, stderr, stdout
 from collections import Counter
 from copy import deepcopy
 from getopt import gnu_getopt, GetoptError
+from multiprocessing import Pool
 import pysam as ps
 import numpy as np
 
@@ -13,6 +14,8 @@ COVERAGETHRESHOLD = 4
 AGREEMENTTHRESHOLD = 0.9
 AVERAGEREADLENGTH = 114
 CONSENSUSNTHRESHOLD = 0.1
+
+DEBUG = False
 
 """
 Assumptions: 
@@ -106,8 +109,74 @@ class Consensus:
 
         return "".join(sequence)
 
-def main(outfile, threads, intervalname, bamname):
+def process_interval((bamname, chrom, start, end)):
     global COVERAGETHRESHOLD, CONSENSUSNTHRESHOLD
+
+    bamfile = ps.AlignmentFile(bamname, 'r')
+    region = "%s:%d-%d" % (chrom, start, end)
+    if DEBUG: print >> stderr, "Working on region: %s" % region
+
+    umi_families = Counter()
+    num_reads = 0
+    reference_id = None
+    for aln in bamfile.fetch(region=region):
+        # require that both pairs from this fragment align to this region
+        if ignore_alignment(aln, start, end): continue
+
+        umi = aln.query_name.split(":")[-1]
+        umi_families[umi] += 1      
+        num_reads += 1
+        if reference_id is None: reference_id = aln.reference_id
+
+    if DEBUG:
+        print >> stderr, "Number of reads in this region: %d" % num_reads
+        print >> stderr, "Number of UMI families: %d" % len(umi_families)
+        print >> stderr, "Number of UMI families with more than %d members: %d" % (UMITHRESHOLD, len([x for x,y in umi_families.items() if y > UMITHRESHOLD]))
+
+    family_counter = deepcopy(umi_families)
+    consensus = {}
+    sequences = []
+    num_aligned = 0
+    num_overlapping = 0
+    num_checked = 0
+    for aln in bamfile.fetch(region=region):
+        # require that both pairs from this fragment align to this region
+        if ignore_alignment(aln, start, end): continue
+
+        # lets get some statistics on our assumption
+        if (aln.next_reference_start > aln.reference_start):
+            num_checked += 1
+            if (aln.aend >= aln.next_reference_start):
+                num_overlapping += 1 
+
+        umi = aln.query_name.split(":")[-1]
+        if umi_families[umi] > COVERAGETHRESHOLD:
+            if umi not in consensus:
+                consensus[umi] = Consensus(start, end)
+            consensus[umi].add_alignment(aln)
+            family_counter[umi] -= 1
+            if family_counter[umi] == 0:
+                seq = str(consensus[umi])
+                counts = Counter(seq)
+                if 'N' not in counts or \
+                (counts['N']*1./sum(counts.values())) < CONSENSUSNTHRESHOLD:
+                    sequences.append((umi, seq))
+                for k,v in consensus[umi].profile.items():
+                    del[v]
+                del(consensus[umi])
+            num_aligned += 1
+            #if num_aligned % 20000 == 0:
+            #    print >> stderr, "Included %d reads" % (num_aligned)
+    if DEBUG and num_checked > 0:
+        print >> stderr, "Fraction of overlapping pairs: %2.2f" % (num_overlapping*1./num_checked)
+
+    del consensus        
+    del umi_families 
+    del family_counter
+    return sequences
+
+def main(outfile, threads, intervalname, bamname):
+    global DEBUG
 
     # read in all the intervals
     intervals = []
@@ -118,68 +187,19 @@ def main(outfile, threads, intervalname, bamname):
             end = int(end)
             intervals.append((chrom, start, end))
 
-    bamfile = ps.AlignmentFile(bamname, 'r')
-
-    for chrom, start, end in intervals:
-        region = "%s:%d-%d" % (chrom, start, end)
-        #print >> stderr, "Working on region: %s" % region
-
-        umi_families = Counter()
-        num_reads = 0
-        reference_id = None
-        for aln in bamfile.fetch(region=region):
-            # require that both pairs from this fragment align to this region
-            if ignore_alignment(aln, start, end): continue
-
-            umi = aln.query_name.split(":")[-1]
-            umi_families[umi] += 1      
-            num_reads += 1
-            if reference_id is None: reference_id = aln.reference_id
-    
-        #print >> stderr, "Number of reads in this region: %d" % num_reads
-        #print >> stderr, "Number of UMI families: %d" % len(umi_families)
-        #print >> stderr, "Number of UMI families with more than %d members: %d" % (UMIThreshold, len([x for x,y in umi_families.items() if y > UMIThreshold]))
-    
-        family_counter = deepcopy(umi_families)
-        consensus = {}
-        num_aligned = 0
-        num_overlapping = 0
-        num_checked = 0
-        for aln in bamfile.fetch(region=region):
-            # require that both pairs from this fragment align to this region
-            if ignore_alignment(aln, start, end): continue
-
-            # lets get some statistics on our assumption
-            if (aln.next_reference_start > aln.reference_start):
-                num_checked += 1
-                if (aln.aend >= aln.next_reference_start):
-                    num_overlapping += 1 
-
-            umi = aln.query_name.split(":")[-1]
-            if umi_families[umi] > COVERAGETHRESHOLD:
-                if umi not in consensus:
-                    consensus[umi] = Consensus(start, end)
-                consensus[umi].add_alignment(aln)
-                family_counter[umi] -= 1
-                if family_counter[umi] == 0:
-                    seq = str(consensus[umi])
-                    counts = Counter(seq)
-                    if 'N' not in counts or \
-                    (counts['N']*1./sum(counts.values())) < CONSENSUSNTHRESHOLD:
-                        print >> outfile, ">%s" % umi
-                        print >> outfile, seq
-                    for k,v in consensus[umi].profile.items():
-                        del[v]
-                    del(consensus[umi])
-                num_aligned += 1
-                #if num_aligned % 20000 == 0:
-                #    print >> stderr, "Included %d reads" % (num_aligned)
-        #if num_checked > 0:
-        #    print >> stderr, "Fraction of overlapping pairs: %2.2f" % (num_overlapping*1./num_checked)
-
-        del consensus        
-        del umi_families 
-        del family_counter
+    if DEBUG:
+        for chrom, start, end in intervals:
+            sequences = process_interval((bamname, chrom, start, end))
+            for umi, seq in sequences:
+                print >> outfile, ">%s" % umi
+                print >> outfile, seq
+    else:
+        pool = Pool(threads)
+        for sequences in pool.imap_unordered(process_interval, 
+                [(bamname, c, s, e) for c,s,e in intervals]):
+            for umi, seq in sequences:
+                print >> outfile, ">%s" % umi
+                print >> outfile, seq
 
 def print_help():
     print >> stderr, "get_consensus_reads [-o output.txt] [-t threads] target.bed alignments.bam"

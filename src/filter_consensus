@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+
+from sys import argv, stderr, stdout
+from getopt import gnu_getopt, GetoptError
+
+
+def main(outfile, filename):
+    allumi = set()
+    ignore = set()
+
+    with open(filename, 'r') as f:
+        for line in f:
+            if line.startswith(">"):
+                umi = line.strip()[1:]
+                if umi in allumi:
+                    ignore.add(umi)
+                else:
+                    allumi.add(umi)
+
+    num_kept = 0
+    num_procd = 0
+    with open(filename, 'r') as f:
+        while f:
+            header = f.readline()
+            seq = f.readline()
+            num_procd += 1
+            if header.strip()[1:] not in ignore:
+                print header,
+                print seq,
+                num_kept += 1
+
+    print >> stderr, "%.2f of the consensus sequences were kept." % (num_kept*1./num_procd) 
+
+def print_help():
+    print >> stderr, "filter_consensus [-o output.txt] consensus.fa" 
+
+if __name__ == "__main__":
+    try:
+        opts, args = gnu_getopt(argv, "o:h", ["output=", "help"])
+    except GetoptError:
+        print_help()
+        exit(2)
+
+    outfile = stdout
+
+    for opt, arg in opts:
+        if opt in ["-h", "--help"]:
+            print_help()
+            exit()
+        elif opt in ["-o", "--output"]:
+            outfile = open(arg, 'w')
+     
+    if len(args) != 2:
+        print_help()
+        exit(2)
+
+    main(outfile, args[1])
+    if outfile != stdout: outfile.close()
+
