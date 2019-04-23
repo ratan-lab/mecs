@@ -76,7 +76,9 @@ class Consensus:
                 assert False
             elif op == 4:
                 qndx += oplen
-            elif op == 5 or op == 6:
+            elif op == 5:
+                pass
+            elif op == 6:
                 assert False
             else:
                 assert False
