@@ -16,20 +16,22 @@ def main(outfile, filename):
                     ignore.add(umi)
                 else:
                     allumi.add(umi)
+    #print >> stderr, "Ignoring %d UMIs" % len(ignore)
 
     num_kept = 0
     num_procd = 0
     with open(filename, 'r') as f:
-        while f:
+        while True:
             header = f.readline()
+            if not header: break
             seq = f.readline()
             num_procd += 1
             if header.strip()[1:] not in ignore:
-                print header,
-                print seq,
+                print >> outfile, header,
+                print >> outfile, seq,
                 num_kept += 1
 
-    print >> stderr, "%.2f of the consensus sequences were kept." % (num_kept*1./num_procd) 
+    #print >> stderr, "%.2f of the consensus sequences were kept." % (num_kept*1./num_procd) 
 
 def print_help():
     print >> stderr, "filter_consensus [-o output.txt] consensus.fa" 
