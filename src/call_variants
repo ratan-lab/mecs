@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+
+from sys import argv, stdin
+from collections import Counter
+from scipy.stats import binom
+import re
+
+MINDEPTH = 1000
+MINVAF = 0.0001
+GERMLINE_VAF = 0.35 # Nitin: everything above this VAF is germline
+
+def return_profiles(reference, alleles):
+    profiles = []
+    for profile in alleles:
+        counts = Counter()
+        indx = 0
+        total = len(profile)
+        while True:
+            if indx == total: break
+            if profile[indx] in [".", ","]:
+                counts[reference] += 1
+                indx += 1
+            elif profile[indx] in ["A","C","G","T","a","c","g","t"]:
+                counts[profile[indx].upper()] += 1
+                indx += 1
+            elif profile[indx] in ["N","n"]:
+                indx += 1
+            elif profile[indx] in ["+", "-"]:
+                direction = profile[indx]
+                tokens = re.match('(\d+)(\D+)(\S*)', profile[indx+1:])
+                indelsize = int(tokens.group(1))
+                indx += 1
+                indx += len(tokens.group(1))
+                if direction == "+":
+                    # insertion
+                    counts["+%s" % profile[indx:(indx+indelsize)].upper()] += 1
+                else:
+                    # deletion
+                    counts["-%s" % profile[indx:(indx+indelsize)].upper()] += 1
+                indx += int(tokens.group(1))
+            elif profile[indx] in ["*"]:
+                indx += 1
+            elif profile[indx] in ["^"]:
+                indx += 2
+            elif profile[indx] in ["$"]:
+                indx += 1
+            else:
+                print >> stderr, "unknown base"
+                exit(1)
+
+        profiles.append(counts)
+    return profiles
+
+samples = argv[1:]
+num_samples = len(samples)
+
+for line in stdin:
+    tokens = line.strip().split("\t")
+    chrom = tokens[0]
+    position = int(tokens[1])
+    reference = tokens[2].upper()
+    
+    depth = sum([int(x) for x in tokens[3::3]])
+    if depth < MINDEPTH: continue    
+
+    #print line,
+    alleles = [x for x in tokens[4::3]]
+
+    profiles = return_profiles(reference, alleles)
+    #print profiles
+
+    rfs = 0
+    rf2 = 0
+    for profile in profiles:
+        rfs += sum(profile.values())
+        rf2 += sum([y for x,y in profile.items() if x != reference])
+    error_probability = rf2 * 1.0 / rfs
+    #print reference, rf2, rfs, error_probability
+
+    for indx, profile in enumerate(profiles):
+        rfs = sum(profile.values())
+        if rfs < MINDEPTH: continue
+        rf2 = sum([y for x,y in profile.items() if x != reference])
+        alts = list(set([x for x,y in profile.items() if x != reference]))
+        if not alts: continue
+
+        hh = binom(rfs, error_probability)
+        for alt in alts:
+            rf2 = sum([y for x,y in profile.items() if x == alt])
+            VAF = rf2 * 1.0 / rfs
+
+            output = [chrom, position, reference, samples[indx], alt, rfs, round(VAF,5), round(hh.pmf(rf2),5)]
+            if hh.pmf(rf2) < (0.05 / num_samples) and VAF > MINVAF:
+                output.append("Y")
+            elif VAF > GERMLINE_VAF:
+                output.append("Y")
+            else:
+                output.append("N")
+            print "\t".join(map(str, output))
+            
+exit(0)

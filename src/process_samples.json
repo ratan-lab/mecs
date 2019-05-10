@@ -1,0 +1,21 @@
+{
+  "##_COMMENT1": "SAMPLE INFO",
+  "process_samples.inputs": "File",
+
+  "##_COMMENT2": "TOOLS",
+  "process_samples.bwa": "String",
+  "process_samples.num_threads": "Int? (optional)",
+  "process_samples.sambamba": "String",
+  "process_samples.mem_sambamba": "Int? (optional)",
+  "process_samples.samtools": "String",
+  "process_samples.vep": "String",
+  "process_samples.vepdata": "String",
+  "process_samples.assembly": "String",
+
+
+  "##_COMMENT3": "OUTPUT AND PIPELINE OPTIONS",
+  "process_samples.scriptdir": "String",
+  "process_samples.reference": "String",
+  "process_samples.target": "File", 
+  "process_samples.tmp_dir": "String"
+}

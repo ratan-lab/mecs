@@ -1,54 +1,61 @@
 #!/usr/bin/env python
 
-from sys import argv, stderr, stdout
+from sys import argv, stdout, stderr
 from collections import Counter
 from copy import deepcopy
 from getopt import gnu_getopt, GetoptError
 from multiprocessing import Pool
 import pysam as ps
 import numpy as np
+import re
 
 # global paramaters I do not expect to be changed for now
 UMITHRESHOLD = 9
 COVERAGETHRESHOLD = 4
 AGREEMENTTHRESHOLD = 0.9
-AVERAGEREADLENGTH = 114
 CONSENSUSNTHRESHOLD = 0.1
+MAXTEMPLATELENGTH = 300
+PADDING = 0
 
-DEBUG = False
+# An assumption here is that most pairs overlap, and hence I would not 
+# have Ns in the consensus in families.
 
-"""
-Assumptions: 
-1. Most read pairs should overlap.
-2. The reads are 114 bps in length.
-"""
+def infer_read_len(cigar):
+    ops = re.findall('[\d]{0,}[A-Z]{1}', cigar)
+    alen = 0
+    for op in ops:
+        if op[-1] in ['M','D']:
+            alen += int(op[:-1])
+        assert op[-1] not in ['N','H','P','=','X','B']
+    return alen
 
-def ignore_alignment(aln, start, end):
+def ignore_alignment(aln):
     """Should I ignore this alignment?"""
-    global AVERAGEREADLENGTH
+    global MAXTEMPLATELENGTH
     if aln.is_unmapped: return True
     if aln.mate_is_unmapped: return True
     if aln.is_secondary: return True
+    if aln.is_supplementary: return True
     if aln.next_reference_id != aln.reference_id: return True
-    if aln.next_reference_start > end: return True
-    if (aln.next_reference_start + AVERAGEREADLENGTH) < start: return True
+    if abs(aln.template_length) > MAXTEMPLATELENGTH: return True
     return False
 
+def pair_overlaps(aln, start, end):
+    left = aln.pos
+    right = aln.aend
+    if left > end or right < start: return False
+
+    alen = infer_read_len(aln.get_tag('MC'))
+    left = aln.next_reference_start
+    right = aln.next_reference_start + alen
+    if left > end or right < start: return False
+
+    return True
+
 class Consensus:
-    """Consensus object that result from alignments of the same read family."""
+    """Consensus that result from alignments of the same read family."""
     def __init__(self, start, end):
         self.profile = {}
-
-    def print_profile(self):
-        positions = self.profile.keys()
-        s = min(positions)
-        e = max(positions)
-        for p in range(s,e+1):
-            if p in self.profile:
-                profile = self.profile[p]
-                print p, profile
-            else:
-                print p
 
     # add a new alignment to the profile
     def add_alignment(self, aln):
@@ -97,41 +104,66 @@ class Consensus:
         for p in range(s,e+1):
             if p in self.profile:
                 profile = self.profile[p]
-                covering = sum(profile.values())
-                agreeing = max(profile.values())
-                if covering > COVERAGETHRESHOLD and \
-                  (agreeing*1./covering) > AGREEMENTTHRESHOLD:
-                    b = profile.most_common(1)[0]
-                    if b[0] != '*':
-                        sequence.append(b[0])
+                alleles = [(y,x) for x,y in profile.items()]
+                alleles.sort(reverse = True)
+                covering = sum([x for x,y in alleles])
+                agreeing = alleles[0][0]
+
+                if covering < COVERAGETHRESHOLD:
+                    sequence.append(".")
+                else:
+                    if (agreeing*1./covering) >= AGREEMENTTHRESHOLD:
+                        b = alleles[0][1]
+                        if b != '*':
+                            sequence.append(b[0])
+                    else:
+                        sequence.append('N')
             else:
-                sequence.append('N')
+                sequence.append(".")
 
         return "".join(sequence)
 
-def process_interval((bamname, chrom, start, end)):
-    global COVERAGETHRESHOLD, CONSENSUSNTHRESHOLD
+def overlaps(a, b):
+    if a[0] is None: return False
+    if a[0] != b[0]: return False
+    assert a[1] <= b[1], "%s :: %s" % (a, b)
+    if b[1] >= a[2]: return False
+    return True
 
-    bamfile = ps.AlignmentFile(bamname, 'r')
+def process_interval(intervals):
+    return _process_interval(*intervals)
+
+def _process_interval(left, center):
+    global UMITHRESHOLD, CONSENSUSNTHRESHOLD
+    
+    ignore_left = overlaps(left, center)
+
+    bamfile = ps.AlignmentFile(argv[1], 'r')
+    chrom, start, end = center
     region = "%s:%d-%d" % (chrom, start, end)
-    if DEBUG: print >> stderr, "Working on region: %s" % region
 
     umi_families = Counter()
     num_reads = 0
     reference_id = None
     for aln in bamfile.fetch(region=region):
-        # require that both pairs from this fragment align to this region
-        if ignore_alignment(aln, start, end): continue
+        # ignore alignment if it is unmapped, secondary, supp or insert length
+        # appears inconsistent with expecation
+        if ignore_alignment(aln): continue
+
+        if ignore_left:
+            # does this alignment and its pair align to the left region. If yes,
+            # the thread responsible for that region should process these.
+            assert left[0] == center[0]
+            if pair_overlaps(aln, left[1], left[2]): continue
+
+        # does this read and its pair overlap this region?
+        if pair_overlaps(aln, start, end) == False: continue
 
         umi = aln.query_name.split(":")[-1]
         umi_families[umi] += 1      
         num_reads += 1
         if reference_id is None: reference_id = aln.reference_id
-
-    if DEBUG:
-        print >> stderr, "Number of reads in this region: %d" % num_reads
-        print >> stderr, "Number of UMI families: %d" % len(umi_families)
-        print >> stderr, "Number of UMI families with more than %d members: %d" % (UMITHRESHOLD, len([x for x,y in umi_families.items() if y > UMITHRESHOLD]))
+    bamfile.close()
 
     family_counter = deepcopy(umi_families)
     consensus = {}
@@ -139,9 +171,22 @@ def process_interval((bamname, chrom, start, end)):
     num_aligned = 0
     num_overlapping = 0
     num_checked = 0
+
+    bamfile = ps.AlignmentFile(argv[1], 'r')
+
     for aln in bamfile.fetch(region=region):
-        # require that both pairs from this fragment align to this region
-        if ignore_alignment(aln, start, end): continue
+        # ignore alignment if it is unmapped, secondary, supp or insert length
+        # appears inconsistent with expecation
+        if ignore_alignment(aln): continue
+
+        if ignore_left:
+            # does this alignment and its pair align to the left region. If yes,
+            # the thread responsible for that region should process these.
+            assert left[0] == center[0]
+            if pair_overlaps(aln, left[1], left[2]): continue
+
+        # does this read and its pair overlap this region?
+        if pair_overlaps(aln, start, end) == False: continue
 
         # lets get some statistics on our assumption
         if (aln.next_reference_start > aln.reference_start):
@@ -150,83 +195,80 @@ def process_interval((bamname, chrom, start, end)):
                 num_overlapping += 1 
 
         umi = aln.query_name.split(":")[-1]
-        if umi_families[umi] > COVERAGETHRESHOLD:
+        if umi_families[umi] > UMITHRESHOLD:
             if umi not in consensus:
                 consensus[umi] = Consensus(start, end)
             consensus[umi].add_alignment(aln)
             family_counter[umi] -= 1
             if family_counter[umi] == 0:
                 seq = str(consensus[umi])
+                #print umi
+                #for k,v in consensus[umi].profile.items():
+                #    print k,v
                 counts = Counter(seq)
-                if 'N' not in counts or \
-                (counts['N']*1./sum(counts.values())) < CONSENSUSNTHRESHOLD:
+
+                nfrac = 0.0
+                if 'N' in counts:
+                    nfrac = counts['N']*1./sum([y for x,y in counts.items() if x != '.'])
+                if nfrac < CONSENSUSNTHRESHOLD:
+                    seq = seq.replace('.','N')
                     sequences.append((umi, seq))
                 for k,v in consensus[umi].profile.items():
                     del[v]
                 del(consensus[umi])
             num_aligned += 1
-            #if num_aligned % 20000 == 0:
-            #    print >> stderr, "Included %d reads" % (num_aligned)
-    if DEBUG and num_checked > 0:
-        print >> stderr, "Fraction of overlapping pairs: %2.2f" % (num_overlapping*1./num_checked)
 
     del consensus        
     del umi_families 
     del family_counter
     return sequences
 
-def main(outfile, threads, intervalname, bamname):
-    global DEBUG
+# read in all the intervals
+intervals = []
+with open(argv[2], 'r') as f:
+    for line in f:
+        chrom, start, end, _ = line.strip().split()
+        start = int(start) - PADDING
+        end = int(end) + PADDING
+        intervals.append((chrom, start, end))
+intervals.sort()
 
-    # read in all the intervals
-    intervals = []
-    with open(intervalname, 'r') as f:
-        for line in f:
-            chrom, start, end = line.strip().split()
-            start = int(start)
-            end = int(end)
-            intervals.append((chrom, start, end))
-
-    if DEBUG:
-        for chrom, start, end in intervals:
-            sequences = process_interval((bamname, chrom, start, end))
-            for umi, seq in sequences:
-                print >> outfile, ">%s" % umi
-                print >> outfile, seq
+sets_of_interest = []
+for i in range(0, len(intervals)):
+    if i == 0:
+        sets_of_interest.append(((None,None,None), intervals[i]))
     else:
-        pool = Pool(threads)
-        for sequences in pool.imap_unordered(process_interval, 
-                [(bamname, c, s, e) for c,s,e in intervals]):
-            for umi, seq in sequences:
-                print >> outfile, ">%s" % umi
-                print >> outfile, seq
+        sets_of_interest.append((intervals[i-1], intervals[i]))
 
-def print_help():
-    print >> stderr, "get_consensus_reads [-o output.txt] [-t threads] target.bed alignments.bam"
+pool = Pool(int(argv[4]))
+tmpfile = open(argv[3], "w")
+for sequences in pool.imap_unordered(process_interval, sets_of_interest):
+    for umi, seq in sequences:
+        print >> tmpfile, ">%s" % umi
+        print >> tmpfile, seq
+tmpfile.close()
 
-if __name__ == "__main__":
-    try:
-        opts, args = gnu_getopt(argv, "o:t:h", ["output=", "threads=", "help"])
-    except GetoptError:
-        print_help()
-        exit(2)
+seen = set()
+ignore = set()
 
-    outfile = stdout
-    threads = 1
+with open(argv[3], 'r') as f:
+    for line in f:
+        if line.startswith(">"):
+            umi = line.strip()[1:]
+            if umi in seen:
+                ignore.add(umi)
+            else:
+                seen.add(umi)
 
-    for opt, arg in opts:
-        if opt in ["-h", "--help"]:
-            print_help()
-            exit()
-        elif opt in ["-o", "--output"]:
-            outfile = open(arg, 'w')
-        elif opt in ["-t", "--threads"]:
-            threads = int(arg)
-     
-    if len(args) != 3:
-        print_help()
-        exit(2)
+o = stdout
+with open(argv[3], 'r') as f:
+    while True:
+        header = f.readline()
+        if not header: break
+        seq = f.readline()
+        umi = header.strip()[1:]
+        if umi not in ignore:
+            print >> o, header,
+            print >> o, seq,
 
-    main(outfile, threads, args[1], args[2])
-    if outfile != stdout: outfile.close()
 

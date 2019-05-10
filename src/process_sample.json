@@ -10,8 +10,10 @@
   "process_sample.num_threads": "Int? (optional)",
   "process_sample.sambamba": "String",
   "process_sample.mem_sambamba": "Int? (optional)",
+  "process_sample.samtools": "String",
 
   "##_COMMENT3": "OUTPUT AND PIPELINE OPTIONS",
+  "process_sample.scriptdir": "String",
   "process_sample.reference": "String",
   "process_sample.target": "File", 
   "process_sample.tmp_dir": "String"

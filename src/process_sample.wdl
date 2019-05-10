@@ -18,29 +18,29 @@ task align_sort_index_fa {
     ${bwa} mem -t ${threads} ${bwaopts} -R "${readgroup}" \
       -K 100000000 ${reference} ${fa} \
     | ${sambamba} view -f bam -S \
-      -o ${tmp_dir}/${outprefix}.ns.alignment.bam -t ${threads} \
-      /dev/stdin
+      -o ${tmp_dir}/${outprefix}.ns.consensus.bam -t ${threads} \
+      /dev/stdin 
     echo "alignment finished"
 
     # sort the alignments 
     ${sambamba} sort -m ${memsambamba}G --tmpdir=${tmp_dir} \
       -t ${threads} \
-      -o ${outprefix}.alignment.bam \
-      ${tmp_dir}/${outprefix}.ns.alignment.bam
+      -o ${outprefix}.consensus.bam \
+      ${tmp_dir}/${outprefix}.ns.consensus.bam
     echo "mapped: coord sort finished"
 
     # index the alignments
     ${sambamba} index -t ${threads} \
-      ${outprefix}.alignment.bam
+      ${outprefix}.consensus.bam
     echo "mapped: index finished"
 
     # delete the temp directory
-    rm ${tmp_dir}/${outprefix}.ns.alignment.bam
+    rm ${tmp_dir}/${outprefix}.ns.consensus.bam
   >>>
 
   output {
-    File alignments = "${outprefix}.alignment.bam"
-    File alignments_index = "${outprefix}.alignment.bam.bai"
+    File alignments = "${outprefix}.consensus.bam"
+    File alignments_index = "${outprefix}.consensus.bam.bai"
   }
 }
 
@@ -54,8 +54,11 @@ task align_sort_index {
   String readgroup
   String reference
   String sambamba
+  String samtools
   Int threads
   String tmp_dir
+
+  Int first_keep=31
 
   command <<<
     set -e 
@@ -63,10 +66,11 @@ task align_sort_index {
     mkdir -p ${tmp_dir}
 
     ${bwa} mem -t ${threads} ${bwaopts} -R "${readgroup}" \
-      -K 100000000 ${reference} ${fq} ${mq} \
-    | ${sambamba} view -f bam -S \
-      -o ${tmp_dir}/${outprefix}.ns.alignment.bam -t ${threads} \
-      /dev/stdin
+      -K 100000000 ${reference} \
+      <(gzip -dc ${fq} |  awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
+      <(gzip -dc ${mq} | awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
+    | ${sambamba} view -f bam -S -t ${threads} /dev/stdin \
+    | ${samtools} fixmate -O BAM - ${tmp_dir}/${outprefix}.ns.alignment.bam 
     echo "alignment finished"
 
     # sort the alignments 
@@ -92,17 +96,18 @@ task align_sort_index {
 }
 
 task get_consensus_reads {
+  String scriptdir
   String outprefix
   File target 
   File bamfile
+  File bamfile_index
   Int threads
 
-  String tempfile = outprefix + ".fa"
-  String outfile = outprefix + ".flt.fa"
+  String tmpfile = outprefix + ".tmp"
+  String outfile = outprefix + ".fa"
 
   command <<<
-    python get_consensus_reads -o ${tempfile} -t ${threads} ${target} ${bamfile}
-    python filter_consensus -o ${outfile} ${tempfile}
+    ${scriptdir}/get_consensus_reads ${bamfile} ${target} ${tmpfile} ${threads} > ${outfile}
   >>>
 
   output {
@@ -124,8 +129,10 @@ workflow process_sample {
   String mq 
   String reference   
   String sambamba
+  String samtools
   String tmp_dir
   File target
+  String scriptdir
 
   String? bwa_options
   String bwaopts = select_first([bwa_options, "-Y"])
@@ -134,7 +141,7 @@ workflow process_sample {
   Int memsambamba = select_first([mem_sambamba, 6])
   
   String? out_prefix
-  String outprefix = select_first([out_prefix, sample+"_"lib])
+  String outprefix = select_first([out_prefix, sample+"_"+lib])
 
   String? read_group
   String rg = "@RG\\tID:" + sample + "_" + lib + "_" + lane + "\\tSM:" + sample + "\\tPU:" + lane + "\\tPL:" + platform
@@ -155,15 +162,18 @@ workflow process_sample {
       reference = reference,
       sambamba = sambamba,
       threads = threads,
-      tmp_dir = tmp_dir
+      tmp_dir = tmp_dir,
+      samtools = samtools
   }
 
   call get_consensus_reads {
     input:
+      scriptdir = scriptdir,
       outprefix = outprefix,
       target = target,
       threads = threads,
-      bamfile = align_sort_index.alignments
+      bamfile = align_sort_index.alignments,
+      bamfile_index = align_sort_index.alignments_index
   }
 
   call align_sort_index_fa {
@@ -179,4 +189,9 @@ workflow process_sample {
       threads = threads,
       tmp_dir = tmp_dir
   }
+
+  output {
+    File output_bam = align_sort_index_fa.alignments
+    File output_bai = align_sort_index_fa.alignments_index
+  }   
 }

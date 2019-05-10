@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+from sys import stdin
+
+for line in stdin:
+    tokens = line.strip().split()
+    if tokens[-1] == 'N': continue
+
+    chromosome = tokens[0]
+    start = int(tokens[1])
+    end = int(tokens[1])
+
+    reference = tokens[2]
+    sample = tokens[3]
+    alternate = tokens[4]
+    VAF = tokens[6]
+    allele = None
+
+    if alternate.find("-") != -1:
+        # deletion
+        ref = reference + alternate[1:]
+        alt = reference
+        allele = "%s/%s" % (ref, alt)
+        end = start + len(ref) - 1
+    elif alternate.find("+") != -1:
+        # insertion
+        ref = reference
+        alt = reference + alternate[1:]
+        allele = "%s/%s" % (ref, alt)
+        start = end + 1
+    else:
+        # substitution
+        allele = "%s/%s" % (reference, alternate)
+    
+    identifier = "%s:%s:%d-%d:%s:%s" % (sample,chromosome,start,end,allele,VAF)
+    output = [chromosome, start, end, allele, "+", identifier]
+
+    print "\t".join(map(str, output))
