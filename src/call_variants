@@ -74,6 +74,8 @@ for line in stdin:
     for profile in profiles:
         rfs += sum(profile.values())
         rf2 += sum([y for x,y in profile.items() if x != reference])
+
+    if rfs == 0: continue
     error_probability = rf2 * 1.0 / rfs
     #print reference, rf2, rfs, error_probability
 

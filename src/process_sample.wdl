@@ -57,6 +57,7 @@ task align_sort_index {
   String samtools
   Int threads
   String tmp_dir
+  String scriptdir
 
   Int first_keep=31
 
@@ -69,6 +70,7 @@ task align_sort_index {
       -K 100000000 ${reference} \
       <(gzip -dc ${fq} |  awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
       <(gzip -dc ${mq} | awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
+    | ${scriptdir}/sanitize_sam \
     | ${sambamba} view -f bam -S -t ${threads} /dev/stdin \
     | ${samtools} fixmate -O BAM - ${tmp_dir}/${outprefix}.ns.alignment.bam 
     echo "alignment finished"
@@ -163,7 +165,8 @@ workflow process_sample {
       sambamba = sambamba,
       threads = threads,
       tmp_dir = tmp_dir,
-      samtools = samtools
+      samtools = samtools,
+      scriptdir = scriptdir
   }
 
   call get_consensus_reads {

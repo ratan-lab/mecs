@@ -1,0 +1,170 @@
+#!/usr/bin/env python
+
+import itertools as it
+from operator import itemgetter
+import sys
+import re
+
+class Bam(object):
+    __slots__ = 'read flag chrom pos mapq cigar chrom_mate pos_mate tlen \
+            seq qual other'.split()
+    def __init__(self, args):
+        for a, v in zip(self.__slots__[:11], args):
+            setattr(self, a, v)
+        self.other = args[11:]
+        self.flag = int(self.flag)
+        self.pos = int(self.pos)
+        self.tlen = int(float(self.tlen))
+
+    def __repr__(self):
+        return "Bam({chr}:{start}:{read}".format(chr=self.chrom,
+                                                 start=self.pos,
+                                                 read=self.read)
+
+    def __str__(self):
+        return "\t".join(str(getattr(self, s)) for s in self.__slots__[:11]) \
+                         + "\t" + "\t".join(self.other)
+
+    def cigs(self):
+        if self.cigar == "*":
+            yield (0, None)
+            raise StopIteration
+        cig_iter = it.groupby(self.cigar, lambda c: c.isdigit())
+        for g, n in cig_iter:
+            yield int("".join(n)), "".join(next(cig_iter)[1])
+
+    def cig_len(self):
+        return sum(c[0] for c in self.cigs() if c[1] in
+                   ("M", "D", "N", "EQ", "X", "P"))
+
+
+def return_quals(aln):
+    quals = {}
+    qndx = 0
+    rndx = aln.pos
+    qseq = aln.qual
+    should_be_last = False
+
+    for oplen, op in aln.cigs():
+        assert should_be_last == False
+        if op in ["M", "EQ", "X"]:
+            # match / mismatch
+            for i in range(0, oplen):
+                quals[rndx] = qseq[qndx]
+                qndx += 1
+                rndx += 1
+        elif op == "I":
+            # insertion
+            quals[rndx-1] = quals[rndx-1] + qseq[qndx:(qndx+oplen)] 
+            qndx += oplen
+        elif op == "D":
+            # deletion
+            rndx += oplen
+        elif op == "S":
+            if len(quals) == 0:
+                quals[rndx-1] = qseq[qndx:(qndx+oplen)]
+                qndx += oplen
+            else:
+                quals[rndx] = qseq[qndx:(qndx+oplen)]
+                should_be_last = True
+                qndx += oplen
+        else:
+            assert False
+    return quals
+
+def get_updated_quals(left, right, start, end):
+    lqual = return_quals(left)
+    rqual = return_quals(right)
+
+    # iterate over the alighment and return the qual associated with ref locs.
+    for i in range(start, end):
+        # if this location is not in both reads, then it has been called a
+        # deletion in one and not the other. 
+        if i in lqual and i in rqual:
+            if lqual[i] < rqual[i]:
+                lqual[i] = '!'*len(lqual[i])
+            else:
+                rqual[i] = '!'*len(rqual[i])
+        else:
+            if i in lqual: lqual[i] = '!'*len(lqual[i])
+            if i in rqual: rqual[i] = '!'*len(rqual[i])
+    return lqual, rqual
+
+line_iter = (x.rstrip("\r\n").split("\t") for x in sys.stdin)
+
+for g, pair in it.groupby(line_iter, itemgetter(0)):
+    # print the header
+    if g.startswith("@"):
+        print "\n".join("\t".join(line) for line in pair)
+        continue
+
+    pair = list(pair)
+    reads = []
+    # ignore reads if they are unmapped, supplementary, qc failed or secondary
+    for b in pair:
+        aln = Bam(b)
+        if (aln.flag & 0xB0C): continue
+        reads.append(aln)
+
+    # I am only interested in pairs where both ends made it to the same chrom
+    if len(reads) < 2: continue
+    assert len(reads) == 2    
+    left, right = reads
+    if left.chrom != right.chrom: continue
+
+    if left.pos <= right.pos:
+        # read1 -----
+        # read2     ------
+        lciglen = left.cig_len()
+        if (left.pos + lciglen) < right.pos:
+            # no overlap
+            print left
+            print right
+            continue
+        else:
+            rciglen = right.cig_len()
+            b1 = right.pos
+            b2 = min(left.pos + lciglen, right.pos + rciglen)
+            ## overlap
+            #if left.tlen > 0:
+            #    # read1 ------>
+            #    # read2    <-----
+            #    b1 = right.pos
+            #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
+            #else:
+            #    # read1 <-------
+            #    # read2   --->
+            #    b1 = right.pos
+            #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
+    else:
+        # read1    ------
+        # read2 ------
+        rciglen = right.cig_len()
+        if (right.pos + rciglen) < left.pos:
+            # no overlap
+            print left
+            print right
+            continue
+        else:
+            lciglen = left.cig_len()
+            b1 = left.pos
+            b2 = min(left.pos + lciglen, right.pos + rciglen)
+            ## overlap  
+            #if left.tlen > 0:
+            #    # read1    -------->
+            #    # read2  <------
+            #    b1 = left.pos
+            #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
+            #else:
+            #    # read1   <---------
+            #    # read2 ------> 
+            #    b1 = left.pos
+            #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
+
+    lqual, rqual = get_updated_quals(left, right, b1, b2)
+    left.qual = "".join([y for x,y in sorted(lqual.items())])
+    right.qual = "".join([y for x,y in sorted(rqual.items())])
+    print left
+    assert len(left.qual) == len(left.seq)
+    print right
+    assert len(right.qual) == len(right.seq)

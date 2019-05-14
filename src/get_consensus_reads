@@ -52,6 +52,12 @@ def pair_overlaps(aln, start, end):
 
     return True
 
+class Alignment:
+    def __init__(self, aln):
+        self.pos = aln.pos
+        self.query_sequence = aln.query_sequence
+        self.cigartuples = aln.cigartuples
+
 class Consensus:
     """Consensus that result from alignments of the same read family."""
     def __init__(self, start, end):
@@ -133,11 +139,7 @@ def overlaps(a, b):
 def process_interval(intervals):
     return _process_interval(*intervals)
 
-def _process_interval(left, center):
-    global UMITHRESHOLD, CONSENSUSNTHRESHOLD
-    
-    ignore_left = overlaps(left, center)
-
+def count_per_umi(ignore_left, left, center):
     bamfile = ps.AlignmentFile(argv[1], 'r')
     chrom, start, end = center
     region = "%s:%d-%d" % (chrom, start, end)
@@ -164,7 +166,17 @@ def _process_interval(left, center):
         num_reads += 1
         if reference_id is None: reference_id = aln.reference_id
     bamfile.close()
+    return umi_families
 
+def _process_interval(left, center):
+    global UMITHRESHOLD, CONSENSUSNTHRESHOLD
+    
+    ignore_left = overlaps(left, center)
+
+    # count the number of reads and pairs per umi
+    umi_families = count_per_umi(ignore_left, left, center)
+
+    # now process the region, and get the consensus sequence per umi
     family_counter = deepcopy(umi_families)
     consensus = {}
     sequences = []
@@ -173,6 +185,8 @@ def _process_interval(left, center):
     num_checked = 0
 
     bamfile = ps.AlignmentFile(argv[1], 'r')
+    chrom, start, end = center
+    region = "%s:%d-%d" % (chrom, start, end)
 
     for aln in bamfile.fetch(region=region):
         # ignore alignment if it is unmapped, secondary, supp or insert length
