@@ -1,13 +1,16 @@
 #!/usr/bin/env python
 
-import itertools as it
+from multiprocessing import Pool
 from operator import itemgetter
+import argparse
+import itertools as it
 import sys
-import re
+
 
 class Bam(object):
     __slots__ = 'read flag chrom pos mapq cigar chrom_mate pos_mate tlen \
-            seq qual other'.split()
+            seq qual other cig_list'.split()
+
     def __init__(self, args):
         for a, v in zip(self.__slots__[:11], args):
             setattr(self, a, v)
@@ -15,6 +18,7 @@ class Bam(object):
         self.flag = int(self.flag)
         self.pos = int(self.pos)
         self.tlen = int(float(self.tlen))
+        self.cig_list = None
 
     def __repr__(self):
         return "Bam({chr}:{start}:{read}".format(chr=self.chrom,
@@ -23,7 +27,7 @@ class Bam(object):
 
     def __str__(self):
         return "\t".join(str(getattr(self, s)) for s in self.__slots__[:11]) \
-                         + "\t" + "\t".join(self.other)
+               + "\t" + "\t".join(self.other)
 
     def cigs(self):
         if self.cigar == "*":
@@ -34,7 +38,9 @@ class Bam(object):
             yield int("".join(n)), "".join(next(cig_iter)[1])
 
     def cig_len(self):
-        return sum(c[0] for c in self.cigs() if c[1] in
+        if not self.cig_list:
+            self.cig_list = list(self.cigs())
+        return sum(c[0] for c in self.cig_list if c[1] in
                    ("M", "D", "N", "EQ", "X", "P"))
 
 
@@ -45,8 +51,8 @@ def return_quals(aln):
     qseq = aln.qual
     should_be_last = False
 
-    for oplen, op in aln.cigs():
-        assert should_be_last == False
+    for oplen, op in aln.cig_list:
+        assert not should_be_last
         if op in ["M", "EQ", "X"]:
             # match / mismatch
             for i in range(0, oplen):
@@ -55,62 +61,61 @@ def return_quals(aln):
                 rndx += 1
         elif op == "I":
             # insertion
-            quals[rndx-1] = quals[rndx-1] + qseq[qndx:(qndx+oplen)] 
+            quals[rndx - 1] = quals[rndx - 1] + qseq[qndx:(qndx + oplen)]
             qndx += oplen
         elif op == "D":
             # deletion
             rndx += oplen
         elif op == "S":
             if len(quals) == 0:
-                quals[rndx-1] = qseq[qndx:(qndx+oplen)]
+                quals[rndx - 1] = qseq[qndx:(qndx + oplen)]
                 qndx += oplen
             else:
-                quals[rndx] = qseq[qndx:(qndx+oplen)]
+                quals[rndx] = qseq[qndx:(qndx + oplen)]
                 should_be_last = True
                 qndx += oplen
         else:
             assert False
     return quals
 
+
 def get_updated_quals(left, right, start, end):
     lqual = return_quals(left)
     rqual = return_quals(right)
 
-    # iterate over the alighment and return the qual associated with ref locs.
+    # iterate over the alignment and return the qual associated with ref locs.
     for i in range(start, end):
         # if this location is not in both reads, then it has been called a
-        # deletion in one and not the other. 
+        # deletion in one and not the other.
         if i in lqual and i in rqual:
             if lqual[i] < rqual[i]:
-                lqual[i] = '!'*len(lqual[i])
+                lqual[i] = '!' * len(lqual[i])
             else:
-                rqual[i] = '!'*len(rqual[i])
+                rqual[i] = '!' * len(rqual[i])
         else:
-            if i in lqual: lqual[i] = '!'*len(lqual[i])
-            if i in rqual: rqual[i] = '!'*len(rqual[i])
+            if i in lqual:
+                lqual[i] = '!' * len(lqual[i])
+            if i in rqual:
+                rqual[i] = '!' * len(rqual[i])
     return lqual, rqual
 
-line_iter = (x.rstrip("\r\n").split("\t") for x in sys.stdin)
 
-for g, pair in it.groupby(line_iter, itemgetter(0)):
-    # print the header
-    if g.startswith("@"):
-        print "\n".join("\t".join(line) for line in pair)
-        continue
-
-    pair = list(pair)
+def process_pair(pair):
     reads = []
     # ignore reads if they are unmapped, supplementary, qc failed or secondary
     for b in pair:
         aln = Bam(b)
-        if (aln.flag & 0xB0C): continue
+        if aln.flag & 0xB0C:
+            continue
         reads.append(aln)
 
     # I am only interested in pairs where both ends made it to the same chrom
-    if len(reads) < 2: continue
-    assert len(reads) == 2    
+    if len(reads) < 2:
+        return None
+    assert len(reads) == 2
     left, right = reads
-    if left.chrom != right.chrom: continue
+    if left.chrom != right.chrom:
+        return None
 
     if left.pos <= right.pos:
         # read1 -----
@@ -118,20 +123,18 @@ for g, pair in it.groupby(line_iter, itemgetter(0)):
         lciglen = left.cig_len()
         if (left.pos + lciglen) < right.pos:
             # no overlap
-            print left
-            print right
-            continue
+            return left, right
         else:
             rciglen = right.cig_len()
             b1 = right.pos
             b2 = min(left.pos + lciglen, right.pos + rciglen)
-            ## overlap
-            #if left.tlen > 0:
+            # overlap
+            # if left.tlen > 0:
             #    # read1 ------>
             #    # read2    <-----
             #    b1 = right.pos
             #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
-            #else:
+            # else:
             #    # read1 <-------
             #    # read2   --->
             #    b1 = right.pos
@@ -142,29 +145,56 @@ for g, pair in it.groupby(line_iter, itemgetter(0)):
         rciglen = right.cig_len()
         if (right.pos + rciglen) < left.pos:
             # no overlap
-            print left
-            print right
-            continue
+            return left, right
         else:
             lciglen = left.cig_len()
             b1 = left.pos
             b2 = min(left.pos + lciglen, right.pos + rciglen)
-            ## overlap  
-            #if left.tlen > 0:
+            # overlap
+            # if left.tlen > 0:
             #    # read1    -------->
             #    # read2  <------
             #    b1 = left.pos
             #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
-            #else:
+            # else:
             #    # read1   <---------
-            #    # read2 ------> 
+            #    # read2 ------>
             #    b1 = left.pos
             #    b2 = min(left.pos + left.cig_len(), right.pos + right.cig_len())
 
     lqual, rqual = get_updated_quals(left, right, b1, b2)
-    left.qual = "".join([y for x,y in sorted(lqual.items())])
-    right.qual = "".join([y for x,y in sorted(rqual.items())])
-    print left
+    left.qual = "".join([y for x, y in sorted(lqual.items())])
+    right.qual = "".join([y for x, y in sorted(rqual.items())])
     assert len(left.qual) == len(left.seq)
-    print right
     assert len(right.qual) == len(right.seq)
+    return left, right
+
+
+def get_pairs(infile):
+    line_iter = (x.rstrip("\r\n").split("\t") for x in infile)
+    for g, pair in it.groupby(line_iter, itemgetter(0)):
+        if g.startswith("@"):
+            # print headers
+            print "\n".join("\t".join(line) for line in pair)
+            continue
+        yield list(pair)
+    raise StopIteration
+
+
+def run(infile, threads):
+    pool = Pool(processes=threads)
+
+    for ans in pool.imap_unordered(process_pair, get_pairs(infile)):
+        if ans:
+            assert len(ans) == 2
+            print ans[0]  # left
+            print ans[1]  # right
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-infile', type=argparse.FileType('r'), default=sys.stdin)
+    parser.add_argument('-t', action='store', type=int, default=1, required=False,
+                        help='number of threads (default of 1)')
+    args = parser.parse_args(args=sys.argv[1:])
+    run(args.infile, args.t)
