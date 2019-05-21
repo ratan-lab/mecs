@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+
+from random import randint, random, choice
+
+def rc(seq):
+    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+    return ''.join([complement[base] for base in seq[::-1]])
+
+idnt1 = 1
+idnt2 = 1
+
+with open("fragments.fa", "r") as f, open("read_1.fq", "w") as r1, open("read_2.fq", "w") as r2:
+    while f:
+        line = f.readline()
+        if not line: break
+        assert line.startswith(">")
+        name = line.strip()[1:]
+        line = f.readline()
+
+        numtime = randint(5,20)
+        for i in range(0, numtime):
+            print >> r1, "@NB501830:353:HK5JNBGX9:1:11101:%d:%d 1:N:0:%s" % (idnt1, idnt2, name)
+            error = randint(10, 140)
+            is_snp = random()
+            seq = line.strip()
+            if is_snp < 0.90:
+                nuc = choice(list(set(['A','C','G','T'])-set(seq[error])))
+                fseq = seq[:error] + nuc + seq[error+1:144]
+            elif is_snp >= 0.9 and is_snp <= 0.95:
+                nuc = choice(['A','C','G','T'])
+                fseq = seq[:error] + seq[error] + nuc + seq[error+1:143]
+            else:
+                fseq = seq[:error] + seq[error+1:145]
+            assert len(fseq) == 144
+            print >> r1, fseq
+            print >> r1, "+"
+            print >> r1, "A"*144
+
+            print >> r2, "@NB501830:353:HK5JNBGX9:1:11101:%d:%d 2:N:0:%s" % (idnt1, idnt2, name)
+            error = randint(10, 140)
+            is_snp = random()
+            seq = rc(line.strip())
+            if is_snp < 0.90:
+                nuc = choice(list(set(['A','C','G','T'])-set(seq[error])))
+                fseq = seq[:error] + nuc + seq[error+1:144]
+            elif is_snp >= 0.9 and is_snp <= 0.95:
+                nuc = choice(['A','C','G','T'])
+                fseq = seq[:error] + seq[error] + nuc + seq[error+1:143]
+            else:
+                fseq = seq[:error] + seq[error+1:145]
+            print >> r2, fseq
+            assert len(fseq) == 144
+            print >> r2, "+"
+            print >> r2, "A"*144
+
+            idnt1 += 1
+            idnt2 += 1

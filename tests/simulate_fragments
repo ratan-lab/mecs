@@ -1,0 +1,73 @@
+#!/usr/bin/env python
+
+import pysam as ps
+from random import choice, randint, random, betavariate
+
+def rc(seq):
+    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+    return ''.join([complement[base] for base in seq[::-1]])
+
+def generate_fragments(anchor, fsize, seq):
+    # return 2000 fragments around 
+    if anchor == 300:
+        f = [seq[anchor:anchor+fsize] for _ in range(0,1000)]
+        r = [rc(seq[anchor-fsize:anchor]) for _ in range(0,1000)]
+        for i in range(10):
+            loc = 50
+            if seq[anchor+loc] == 'G':
+                mt = 'A'
+            else:
+                mt = 'G'
+            f[i] = seq[anchor:anchor+loc] + mt + seq[anchor+loc+1:anchor+fsize]
+    else:
+        f = [seq[anchor:anchor+fsize] for _ in range(0,1000)]
+        r = [rc(seq[anchor-fsize:anchor]) for _ in range(0,1000)]
+    f.extend(r)
+    return f
+
+reference = '/home/ar7jq/scratch/share/gatk_bundle/ftp.broadinstitute.org/bundle/2.8/hg19/ucsc.hg19.fasta'
+
+# all umis
+nucs = ['A','C','G','T']
+umis = ["".join([choice(nucs) for _ in range(16)]) for _ in range(300000)]
+umis = list(set(umis))
+umiindx = 0
+
+PADDING = 0
+
+with open('target.bed', 'r') as f, open("mutations.tsv","w") as o:
+    for line in f:
+        chrom, start, end, _ = line.strip().split()
+        start = int(start) - PADDING
+        end = int(end) + PADDING
+
+        fafile = ps.FastaFile(reference)       
+        ref_seq = fafile.fetch(chrom, start, end).upper()
+
+        # which loci is going to be mutated
+        mutloci = randint(start+PADDING+31, end-PADDING-31)
+        mutloci -= start
+        assert mutloci < len(ref_seq)
+
+        # what fraction of the fragments should have the mutation?
+        mutfrac = betavariate(0.5, 2)
+
+        # what is the mutation
+        ref = ref_seq[mutloci]
+        alt = choice(list(set(['A','C','G','T']) - set([ref])))
+
+        # at each location generate between 1000-2000 fragments
+        numfrags = randint(1000, 2000)
+        num_mutated_frags = int(mutfrac * numfrags)
+        print >> o, "\t".join(map(str,[chrom, mutloci+start, mutfrac, ref, alt,
+numfrags, num_mutated_frags]))
+
+        refseq = ref_seq
+        altseq = ref_seq[:mutloci] + alt + ref_seq[mutloci+1:]
+        for i in range(numfrags):
+            print ">AGGGTCAA+%s" % umis[umiindx]
+            if i < num_mutated_frags:
+                print altseq
+            else:
+                print refseq
+            umiindx += 1
