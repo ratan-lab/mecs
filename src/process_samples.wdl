@@ -23,6 +23,30 @@ workflow process_samples {
   Int? num_threads
   Int threads = select_first([num_threads, 1])
 
+  Int? first_keep
+  Int firstkeep = select_first([first_keep, 31])
+
+  Int? min_reads_per_umi
+  Int minreadsperumi = select_first([min_reads_per_umi, 10])
+
+  Int? min_coverage_per_umi
+  Int mincoverageperumi = select_first([min_coverage_per_umi, 5])
+
+  Float? min_agreement
+  Float minagreement  = select_first([min_agreement, 0.9])
+
+  Float? max_Ns_in_consensus
+  Float maxNsinconsensus = select_first([max_Ns_in_consensus, 0.1])
+
+  Int? max_template_length
+  Int maxtemplatelength = select_first([max_template_length, 300])
+
+  Int? min_coverage_per_loci
+  Int mincoverageperloci = select_first([min_coverage_per_loci, 500])
+
+  Float? min_vaf_as_germline
+  Float minvafasgermline = select_first([min_vaf_as_germline, 0.35])
+
   Array[Array[File]] samples = read_tsv(inputs)
   
   scatter(sample in samples) {
@@ -39,7 +63,13 @@ workflow process_samples {
         target = target,
         tmp_dir = tmp_dir,
         scriptdir = scriptdir,
-        num_threads = threads
+        num_threads = threads,
+        first_keep = firstkeep,
+        min_reads_per_umi = minreadsperumi,
+        min_coverage_per_umi = mincoverageperumi,
+        min_agreement = minagreement,
+        max_Ns_in_consensus = maxNsinconsensus,
+        max_template_length = maxtemplatelength
     }
   }
 
@@ -53,7 +83,9 @@ workflow process_samples {
       vepdata = vepdata,
       assembly = assembly,
       bams = process_sample.output_bam,
-      bais = process_sample.output_bai
+      bais = process_sample.output_bai,
+      min_coverage_per_loci = mincoverageperloci,
+      min_vaf_as_germline = minvafasgermline
   }
 
   output {
@@ -72,6 +104,9 @@ task identify_muts {
   String vepdata
   String assembly
     
+  Int min_coverage_per_loci
+  Float min_vaf_as_germline
+
   String ftb = "$"
 
   command <<<
@@ -79,7 +114,7 @@ task identify_muts {
 
     ${samtools} mpileup -BQ0 -d 10000000000000 -f ${reference} -l ${target} \
       ${sep=' ' bams} \
-    | ${scriptdir}/call_variants ${ftb}{bamnames} \
+    | ${scriptdir}/call_variants -c ${min_coverage_per_loci} -g ${min_vaf_as_germline} ${ftb}{bamnames} \
     > variants.txt
 
     cat variants.txt \

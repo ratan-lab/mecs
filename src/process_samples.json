@@ -4,18 +4,27 @@
 
   "##_COMMENT2": "TOOLS",
   "process_samples.bwa": "String",
-  "process_samples.num_threads": "Int? (optional)",
+  "process_samples.num_threads": "Int? (optional) default:1",
   "process_samples.sambamba": "String",
-  "process_samples.mem_sambamba": "Int? (optional)",
+  "process_samples.mem_sambamba": "Int? (optional) default: 6",
   "process_samples.samtools": "String",
   "process_samples.vep": "String",
   "process_samples.vepdata": "String",
   "process_samples.assembly": "String",
 
-
   "##_COMMENT3": "OUTPUT AND PIPELINE OPTIONS",
   "process_samples.scriptdir": "String",
   "process_samples.reference": "String",
   "process_samples.target": "File", 
-  "process_samples.tmp_dir": "String"
+  "process_samples.tmp_dir": "String",
+
+  "##_COMMENT4": "SETTINGS AND THRESHOLDS",
+  "process_samples.first_keep": "Int? (optional) default:31",
+  "process_samples.min_reads_per_umi": "Int? (optional) default: 10",
+  "process_samples.min_coverage_per_umi": "Int? (optional) default: 5",
+  "process_samples.min_agreement": "Float? (optional) default: 0.9",
+  "process_samples.max_Ns_in_consensus": "Float? (optional) default: 0.1",
+  "process_samples.max_template_length": "Int? (optional) default: 300",
+  "process_samples.min_coverage_per_loci": "Int? (optional) default: 500",
+  "process_samples.min_vaf_as_germline": "Float? (optional) default: 0.35"
 }

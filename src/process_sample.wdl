@@ -58,8 +58,7 @@ task align_sort_index {
   Int threads
   String tmp_dir
   String scriptdir
-
-  Int first_keep=31
+  Int first_keep
 
   command <<<
     set -e 
@@ -70,7 +69,7 @@ task align_sort_index {
       -K 100000000 ${reference} \
       <(gzip -dc ${fq} |  awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
       <(gzip -dc ${mq} | awk -v n=${first_keep} '{if((NR-1)%4==0) {split($2,a,":"); printf "%s:%s\n", $1, a[4]}  else if(((NR-2)%4==0) || ((NR-4)%4==0)) {printf "%s\n", substr($1,n)} else {print $1}}') \
-    | ${scriptdir}/sanitize_sam \
+    | ${scriptdir}/sanitize_sam -t ${threads} \
     | ${sambamba} view -f bam -S -t ${threads} /dev/stdin \
     | ${samtools} fixmate -O BAM - ${tmp_dir}/${outprefix}.ns.alignment.bam 
     echo "alignment finished"
@@ -104,12 +103,17 @@ task get_consensus_reads {
   File bamfile
   File bamfile_index
   Int threads
+  Int min_reads_per_umi
+  Int min_coverage_per_umi
+  Float min_agreement
+  Float max_Ns_in_consensus
+  Int max_template_length
 
   String tmpfile = outprefix + ".tmp"
   String outfile = outprefix + ".fa"
 
   command <<<
-    ${scriptdir}/get_consensus_reads ${bamfile} ${target} ${tmpfile} ${threads} > ${outfile}
+    ${scriptdir}/get_consensus_reads -r ${min_reads_per_umi} -c ${min_coverage_per_umi} -a ${min_agreement} -n ${max_Ns_in_consensus} -t ${max_template_length} -p ${threads} ${bamfile} ${target} ${tmpfile} > ${outfile}
   >>>
 
   output {
@@ -151,6 +155,24 @@ workflow process_sample {
 
   Int? num_threads
   Int threads = select_first([num_threads, 1])
+  
+  Int? first_keep
+  Int firstkeep = select_first([first_keep, 1])
+
+  Int? min_reads_per_umi
+  Int minreadsperumi = select_first([min_reads_per_umi, 10])
+
+  Int? min_coverage_per_umi
+  Int mincoverageperumi = select_first([min_coverage_per_umi, 5])
+
+  Float? min_agreement
+  Float minagreement  = select_first([min_agreement, 0.9])
+
+  Float? max_Ns_in_consensus
+  Float maxNsinconsensus = select_first([max_Ns_in_consensus, 0.1])
+
+  Int? max_template_length
+  Int maxtemplatelength = select_first([max_template_length, 300])
 
   call align_sort_index {
     input:
@@ -166,7 +188,8 @@ workflow process_sample {
       threads = threads,
       tmp_dir = tmp_dir,
       samtools = samtools,
-      scriptdir = scriptdir
+      scriptdir = scriptdir,
+      first_keep = firstkeep
   }
 
   call get_consensus_reads {
@@ -176,7 +199,12 @@ workflow process_sample {
       target = target,
       threads = threads,
       bamfile = align_sort_index.alignments,
-      bamfile_index = align_sort_index.alignments_index
+      bamfile_index = align_sort_index.alignments_index,
+      min_reads_per_umi = minreadsperumi,
+      min_coverage_per_umi = mincoverageperumi,
+      min_agreement = minagreement,
+      max_Ns_in_consensus = maxNsinconsensus,
+      max_template_length = maxtemplatelength
   }
 
   call align_sort_index_fa {

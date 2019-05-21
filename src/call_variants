@@ -4,10 +4,7 @@ from sys import argv, stdin
 from collections import Counter
 from scipy.stats import binom
 import re
-
-MINDEPTH = 1000
-MINVAF = 0.0001
-GERMLINE_VAF = 0.35 # Nitin: everything above this VAF is germline
+import argparse
 
 def return_profiles(reference, alleles):
     profiles = []
@@ -51,53 +48,63 @@ def return_profiles(reference, alleles):
         profiles.append(counts)
     return profiles
 
-samples = argv[1:]
-num_samples = len(samples)
-
-for line in stdin:
-    tokens = line.strip().split("\t")
-    chrom = tokens[0]
-    position = int(tokens[1])
-    reference = tokens[2].upper()
+def run(mincov, minvaf, samples):
+    num_samples = len(samples)
     
-    depth = sum([int(x) for x in tokens[3::3]])
-    if depth < MINDEPTH: continue    
-
-    #print line,
-    alleles = [x for x in tokens[4::3]]
-
-    profiles = return_profiles(reference, alleles)
-    #print profiles
-
-    rfs = 0
-    rf2 = 0
-    for profile in profiles:
-        rfs += sum(profile.values())
-        rf2 += sum([y for x,y in profile.items() if x != reference])
-
-    if rfs == 0: continue
-    error_probability = rf2 * 1.0 / rfs
-    #print reference, rf2, rfs, error_probability
-
-    for indx, profile in enumerate(profiles):
-        rfs = sum(profile.values())
-        if rfs < MINDEPTH: continue
-        rf2 = sum([y for x,y in profile.items() if x != reference])
-        alts = list(set([x for x,y in profile.items() if x != reference]))
-        if not alts: continue
-
-        hh = binom(rfs, error_probability)
-        for alt in alts:
-            rf2 = sum([y for x,y in profile.items() if x == alt])
-            VAF = rf2 * 1.0 / rfs
-
-            output = [chrom, position, reference, samples[indx], alt, rfs, round(VAF,5), round(hh.pmf(rf2),5)]
-            if hh.pmf(rf2) < (0.05 / num_samples) and VAF > MINVAF:
-                output.append("Y")
-            elif VAF > GERMLINE_VAF:
-                output.append("Y")
-            else:
-                output.append("N")
-            print "\t".join(map(str, output))
+    for line in stdin:
+        tokens = line.strip().split("\t")
+        chrom = tokens[0]
+        position = int(tokens[1])
+        reference = tokens[2].upper()
+        
+        depth = sum([int(x) for x in tokens[3::3]])
+        if depth < mincov: continue    
+    
+        #print line,
+        alleles = [x for x in tokens[4::3]]
+    
+        profiles = return_profiles(reference, alleles)
+        #print profiles
+    
+        rfs = 0
+        rf2 = 0
+        for profile in profiles:
+            rfs += sum(profile.values())
+            rf2 += sum([y for x,y in profile.items() if x != reference])
             
-exit(0)
+        if rfs == 0: continue
+        error_probability = rf2 * 1.0 / rfs
+        #print reference, rf2, rfs, error_probability
+    
+        for indx, profile in enumerate(profiles):
+            rfs = sum(profile.values())
+            if rfs < mincov: continue
+            rf2 = sum([y for x,y in profile.items() if x != reference])
+            alts = list(set([x for x,y in profile.items() if x != reference]))
+            if not alts: continue
+    
+            hh = binom(rfs, error_probability)
+            for alt in alts:
+                rf2 = sum([y for x,y in profile.items() if x == alt])
+                VAF = rf2 * 1.0 / rfs
+    
+                output = [chrom, position, reference, samples[indx], alt, rfs, round(VAF,5), round(hh.pmf(rf2),5)]
+                if hh.pmf(rf2) < (0.05 / num_samples):
+                    output.append("Y")
+                elif VAF > minvaf:
+                    output.append("Y")
+                else:
+                    output.append("N")
+                print "\t".join(map(str, output))
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', action='store', type=int, default=500, 
+                        required=True,
+                        help='Minimum coverage of loci required (default 500)')
+    parser.add_argument('-g', action='store', type=float, default=0.35,
+                        required=True,
+                        help='VAF greater than this is germline (default 0.35)')
+    args, others = parser.parse_known_args(args=argv[1:])
+
+    run(args.c, args.g, others)

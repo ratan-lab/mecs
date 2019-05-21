@@ -8,17 +8,14 @@ from multiprocessing import Pool
 import pysam as ps
 import numpy as np
 import re
+import argparse
 
-# global paramaters I do not expect to be changed for now
-UMITHRESHOLD = 9
-COVERAGETHRESHOLD = 4
-AGREEMENTTHRESHOLD = 0.9
-CONSENSUSNTHRESHOLD = 0.1
-MAXTEMPLATELENGTH = 300
 PADDING = 0
 
 # An assumption here is that most pairs overlap, and hence I would not 
 # have Ns in the consensus in families.
+class Options():
+    pass
 
 def infer_read_len(cigar):
     ops = re.findall('[\d]{0,}[A-Z]{1}', cigar)
@@ -29,15 +26,14 @@ def infer_read_len(cigar):
         assert op[-1] not in ['N','H','P','=','X','B']
     return alen
 
-def ignore_alignment(aln):
+def ignore_alignment(aln, max_template_length):
     """Should I ignore this alignment?"""
-    global MAXTEMPLATELENGTH
     if aln.is_unmapped: return True
     if aln.mate_is_unmapped: return True
     if aln.is_secondary: return True
     if aln.is_supplementary: return True
     if aln.next_reference_id != aln.reference_id: return True
-    if abs(aln.template_length) > MAXTEMPLATELENGTH: return True
+    if abs(aln.template_length) > max_template_length: return True
     return False
 
 def pair_overlaps(aln, start, end):
@@ -60,12 +56,16 @@ class Alignment:
 
 class Consensus:
     """Consensus that result from alignments of the same read family."""
+    min_coverage_per_umi = None
+    min_agreement = None
+
     def __init__(self, start, end):
         self.profile = {}
 
     # add a new alignment to the profile
     def add_alignment(self, aln):
         qseq = aln.query_sequence
+        qual = aln.query_qualities
         qndx = 0
         rndx = aln.pos
         for op, oplen in aln.cigartuples:
@@ -73,14 +73,21 @@ class Consensus:
                 # match / mismatch
                 for i in range(0, oplen):
                     if rndx not in self.profile: self.profile[rndx] = Counter()
-                    self.profile[rndx][qseq[qndx]] += 1
+                    if qual[qndx] > 0:
+                        self.profile[rndx][qseq[qndx]] += 1
                     qndx += 1
                     rndx += 1
             elif op == 1:
                 # insertion
                 assert rndx-1 in self.profile
-                self.profile[rndx-1][qseq[qndx-1]] -= 1
-                self.profile[rndx-1][qseq[qndx-1:qndx+oplen]] += 1
+                toadd = True
+                for i in range(qndx-1, qndx+oplen):
+                    if qual[i] == 0:
+                        toadd = False
+                        break
+                if toadd:
+                    self.profile[rndx-1][qseq[qndx-1]] -= 1
+                    self.profile[rndx-1][qseq[qndx-1:qndx+oplen]] += 1
                 qndx += oplen
             elif op == 2:
                 # deletion
@@ -100,8 +107,6 @@ class Consensus:
                 assert False
 
     def __str__(self):
-        global COVERAGETHRESHOLD, AGREEMENTTHRESHOLD
-
         positions = self.profile.keys()
         s = min(positions)
         e = max(positions)
@@ -110,15 +115,19 @@ class Consensus:
         for p in range(s,e+1):
             if p in self.profile:
                 profile = self.profile[p]
+                if not profile:
+                    sequence.append(".")
+                    continue
+
                 alleles = [(y,x) for x,y in profile.items()]
                 alleles.sort(reverse = True)
                 covering = sum([x for x,y in alleles])
                 agreeing = alleles[0][0]
 
-                if covering < COVERAGETHRESHOLD:
+                if covering < Consensus.min_coverage_per_umi:
                     sequence.append(".")
                 else:
-                    if (agreeing*1./covering) >= AGREEMENTTHRESHOLD:
+                    if (agreeing*1./covering) >= Consensus.min_agreement:
                         b = alleles[0][1]
                         if b != '*':
                             sequence.append(b[0])
@@ -139,8 +148,8 @@ def overlaps(a, b):
 def process_interval(intervals):
     return _process_interval(*intervals)
 
-def count_per_umi(ignore_left, left, center):
-    bamfile = ps.AlignmentFile(argv[1], 'r')
+def count_per_umi(ignore_left, left, center, max_template_length, bamname):
+    bamfile = ps.AlignmentFile(bamname, 'r')
     chrom, start, end = center
     region = "%s:%d-%d" % (chrom, start, end)
 
@@ -150,7 +159,7 @@ def count_per_umi(ignore_left, left, center):
     for aln in bamfile.fetch(region=region):
         # ignore alignment if it is unmapped, secondary, supp or insert length
         # appears inconsistent with expecation
-        if ignore_alignment(aln): continue
+        if ignore_alignment(aln, max_template_length): continue
 
         if ignore_left:
             # does this alignment and its pair align to the left region. If yes,
@@ -168,13 +177,13 @@ def count_per_umi(ignore_left, left, center):
     bamfile.close()
     return umi_families
 
-def _process_interval(left, center):
-    global UMITHRESHOLD, CONSENSUSNTHRESHOLD
-    
+def _process_interval(left, center, options):
     ignore_left = overlaps(left, center)
 
     # count the number of reads and pairs per umi
-    umi_families = count_per_umi(ignore_left, left, center)
+    umi_families = count_per_umi(ignore_left, left, center, 
+                                 options.max_template_length,
+                                 options.bamfile)
 
     # now process the region, and get the consensus sequence per umi
     family_counter = deepcopy(umi_families)
@@ -184,14 +193,14 @@ def _process_interval(left, center):
     num_overlapping = 0
     num_checked = 0
 
-    bamfile = ps.AlignmentFile(argv[1], 'r')
+    bamfile = ps.AlignmentFile(options.bamfile, 'r')
     chrom, start, end = center
     region = "%s:%d-%d" % (chrom, start, end)
 
     for aln in bamfile.fetch(region=region):
         # ignore alignment if it is unmapped, secondary, supp or insert length
         # appears inconsistent with expecation
-        if ignore_alignment(aln): continue
+        if ignore_alignment(aln, options.max_template_length): continue
 
         if ignore_left:
             # does this alignment and its pair align to the left region. If yes,
@@ -209,7 +218,7 @@ def _process_interval(left, center):
                 num_overlapping += 1 
 
         umi = aln.query_name.split(":")[-1]
-        if umi_families[umi] > UMITHRESHOLD:
+        if umi_families[umi] >= options.min_reads_per_umi:
             if umi not in consensus:
                 consensus[umi] = Consensus(start, end)
             consensus[umi].add_alignment(aln)
@@ -224,7 +233,7 @@ def _process_interval(left, center):
                 nfrac = 0.0
                 if 'N' in counts:
                     nfrac = counts['N']*1./sum([y for x,y in counts.items() if x != '.'])
-                if nfrac < CONSENSUSNTHRESHOLD:
+                if nfrac < options.max_ns_in_consensus:
                     seq = seq.replace('.','N')
                     sequences.append((umi, seq))
                 for k,v in consensus[umi].profile.items():
@@ -237,52 +246,92 @@ def _process_interval(left, center):
     del family_counter
     return sequences
 
-# read in all the intervals
-intervals = []
-with open(argv[2], 'r') as f:
-    for line in f:
-        chrom, start, end, _ = line.strip().split()
-        start = int(start) - PADDING
-        end = int(end) + PADDING
-        intervals.append((chrom, start, end))
-intervals.sort()
+def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
+        max_ns_in_consensus, max_template_length, num_threads, argo):
+    global PADDING
 
-sets_of_interest = []
-for i in range(0, len(intervals)):
-    if i == 0:
-        sets_of_interest.append(((None,None,None), intervals[i]))
-    else:
-        sets_of_interest.append((intervals[i-1], intervals[i]))
+    # lets get all the user specified options into a structure
+    options = Options()
+    options.min_reads_per_umi = min_reads_per_umi
+    options.min_coverage_per_umi = min_coverage_per_umi
+    options.min_agreement = min_agreement
+    options.max_ns_in_consensus = max_ns_in_consensus
+    options.max_template_length = max_template_length
+    options.bamfile = argo[0]
 
-pool = Pool(int(argv[4]))
-tmpfile = open(argv[3], "w")
-for sequences in pool.imap_unordered(process_interval, sets_of_interest):
-    for umi, seq in sequences:
-        print >> tmpfile, ">%s" % umi
-        print >> tmpfile, seq
-tmpfile.close()
+    Consensus.min_coverage_per_umi = min_coverage_per_umi
+    Consensus.min_agreement = min_agreement
 
-seen = set()
-ignore = set()
+    # read in all the intervals
+    intervals = []
+    with open(argo[1], 'r') as f:
+        for line in f:
+            chrom, start, end, _ = line.strip().split()
+            start = int(start) - PADDING
+            end = int(end) + PADDING
+            intervals.append((chrom, start, end))
+    intervals.sort()
+    
+    sets_of_interest = []
+    for i in range(0, len(intervals)):
+        if i == 0:
+            sets_of_interest.append(((None,None,None), intervals[i], options))
+        else:
+            sets_of_interest.append((intervals[i-1], intervals[i], options))
+    
+    pool = Pool(num_threads)
+    tmpfile = open(argo[2], "w")
+    for sequences in pool.imap_unordered(process_interval, sets_of_interest):
+        for umi, seq in sequences:
+            print >> tmpfile, ">%s" % umi
+            print >> tmpfile, seq
+    tmpfile.close()
+    
+    seen = set()
+    ignore = set()
+    
+    with open(argo[2], 'r') as f:
+        for line in f:
+            if line.startswith(">"):
+                umi = line.strip()[1:]
+                if umi in seen:
+                    ignore.add(umi)
+                else:
+                    seen.add(umi)
+    
+    o = stdout
+    with open(argo[2], 'r') as f:
+        while True:
+            header = f.readline()
+            if not header: break
+            seq = f.readline()
+            umi = header.strip()[1:]
+            if umi not in ignore:
+                print >> o, header,
+                print >> o, seq,
 
-with open(argv[3], 'r') as f:
-    for line in f:
-        if line.startswith(">"):
-            umi = line.strip()[1:]
-            if umi in seen:
-                ignore.add(umi)
-            else:
-                seen.add(umi)
 
-o = stdout
-with open(argv[3], 'r') as f:
-    while True:
-        header = f.readline()
-        if not header: break
-        seq = f.readline()
-        umi = header.strip()[1:]
-        if umi not in ignore:
-            print >> o, header,
-            print >> o, seq,
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-r', action='store', type=int, default=10,
+                        required=True, 
+                        help='minimum number of reads per umi required')
+    parser.add_argument('-c', action='store', type=int, default=5,
+                        required=True, 
+                        help='minimum coverage at a loci of a umi')
+    parser.add_argument('-a', action='store', type=float, default=0.9,
+                        required=True, 
+                        help='minimum agreement to call consensus')
+    parser.add_argument('-n', action='store', type=float, default=0.1,
+                        required=True, 
+                        help='max allowed fraction of Ns in consensus')
+    parser.add_argument('-t', action='store', type=int, default=300,
+                        required=True, 
+                        help='max expected template length')
+    parser.add_argument('-p', action='store', type=int, default=1,
+                        required=True,
+                        help='number of processes to use')
+    args, others = parser.parse_known_args(args=argv[1:])
+    assert len(others) == 3
 
-
+    run(args.r, args.c, args.a, args.n, args.t, args.p, others)
