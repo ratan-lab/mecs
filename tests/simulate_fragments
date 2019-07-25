@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
-import pysam as ps
+from sys import argv
 from random import choice, randint, random, betavariate
+import pysam as ps
 
 def rc(seq):
     complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
@@ -25,7 +26,7 @@ def generate_fragments(anchor, fsize, seq):
     f.extend(r)
     return f
 
-reference = '/home/ar7jq/scratch/share/gatk_bundle/ftp.broadinstitute.org/bundle/2.8/hg19/ucsc.hg19.fasta'
+reference = argv[1]
 
 # all umis
 nucs = ['A','C','G','T']
