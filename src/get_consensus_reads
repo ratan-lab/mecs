@@ -278,13 +278,19 @@ def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
             sets_of_interest.append(((None,None,None), intervals[i], options))
         else:
             sets_of_interest.append((intervals[i-1], intervals[i], options))
-    
-    pool = Pool(num_threads)
+   
     tmpfile = open(argo[2], "w")
-    for sequences in pool.imap_unordered(process_interval, sets_of_interest):
-        for umi, seq in sequences:
-            print >> tmpfile, ">%s" % umi
-            print >> tmpfile, seq
+    if num_threads == 1:
+        for sequences in map(process_interval, sets_of_interest):
+            for umi, seq in sequences:
+                print >> tmpfile, ">%s" % umi
+                print >> tmpfile, seq
+    else: 
+        pool = Pool(num_threads)
+        for sequences in pool.imap_unordered(process_interval, sets_of_interest):
+            for umi, seq in sequences:
+                print >> tmpfile, ">%s" % umi
+                print >> tmpfile, seq
     tmpfile.close()
     
     seen = set()

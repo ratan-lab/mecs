@@ -182,13 +182,19 @@ def get_pairs(infile):
 
 
 def run(infile, threads):
-    pool = Pool(processes=threads)
-
-    for ans in pool.imap_unordered(process_pair, get_pairs(infile)):
-        if ans:
-            assert len(ans) == 2
-            print ans[0]  # left
-            print ans[1]  # right
+    if threads == 1:
+        for ans in map(process_pair, get_pairs(infile)):
+            if ans:
+                assert len(ans) == 2
+                print ans[0]  # left
+                print ans[1]  # right
+    else:
+        pool = Pool(processes=threads)
+        for ans in pool.imap_unordered(process_pair, get_pairs(infile)):
+            if ans:
+                assert len(ans) == 2
+                print ans[0]  # left
+                print ans[1]  # right
 
 
 if __name__ == "__main__":
