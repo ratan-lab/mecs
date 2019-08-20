@@ -148,7 +148,8 @@ def overlaps(a, b):
 def process_interval(intervals):
     return _process_interval(*intervals)
 
-def count_per_umi(ignore_left, left, center, max_template_length, bamname):
+def count_per_umi(ignore_left, left, center, max_template_length, bamname,
+                  umi_indx):
     bamfile = ps.AlignmentFile(bamname, 'r')
     chrom, start, end = center
     region = "%s:%d-%d" % (chrom, start, end)
@@ -170,7 +171,7 @@ def count_per_umi(ignore_left, left, center, max_template_length, bamname):
         # does this read and its pair overlap this region?
         if pair_overlaps(aln, start, end) == False: continue
 
-        umi = aln.query_name.split(":")[-1]
+        umi = aln.query_name.split(":")[umi_indx]
         umi_families[umi] += 1      
         num_reads += 1
         if reference_id is None: reference_id = aln.reference_id
@@ -183,7 +184,9 @@ def _process_interval(left, center, options):
     # count the number of reads and pairs per umi
     umi_families = count_per_umi(ignore_left, left, center, 
                                  options.max_template_length,
-                                 options.bamfile)
+                                 options.bamfile, options.umi_indx)
+    for k,v in umi_families.items():
+        print >>stderr, k,v
 
     # now process the region, and get the consensus sequence per umi
     family_counter = deepcopy(umi_families)
@@ -217,7 +220,7 @@ def _process_interval(left, center, options):
             if (aln.aend >= aln.next_reference_start):
                 num_overlapping += 1 
 
-        umi = aln.query_name.split(":")[-1]
+        umi = aln.query_name.split(":")[options.umi_indx]
         if umi_families[umi] >= options.min_reads_per_umi:
             if umi not in consensus:
                 consensus[umi] = Consensus(start, end)
@@ -261,6 +264,16 @@ def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
 
     Consensus.min_coverage_per_umi = min_coverage_per_umi
     Consensus.min_agreement = min_agreement
+
+    # lets make sure we can identify the UMIs
+    options.umi_indx = None
+    for aln in ps.AlignmentFile(argo[0]):
+        tokens = aln.query_name.split(":")
+        for indx, token in enumerate(tokens):
+            if sum([x.isalpha() for x in token]) == len(token) == 16:
+                options.umi_indx = indx     
+        break
+    assert options.umi_indx is not None
 
     # read in all the intervals
     intervals = []
