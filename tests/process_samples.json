@@ -6,6 +6,7 @@
   "process_samples.bwa": "/home/ar7jq/scratch/share/bwa-0.7.17/bwa",
   "process_samples.sambamba": "/home/ar7jq/scratch/share/sambamba_v0.6.9",
   "process_samples.samtools": "/home/ar7jq/scratch/share/samtools-1.9/samtools",
+  "process_samples.pear" : "/home/ar7jq/scratch/share/PEAR/bin/pear-0.9.6-bin-64",
   "process_samples.vep": "/home/ar7jq/scratch/share/ensembl-vep/vep",
   "process_samples.vepdata": "/home/ar7jq/scratch/share/ensembl-vep/data",
   "process_samples.assembly": "GRCh37",

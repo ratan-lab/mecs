@@ -10,6 +10,7 @@
   "process_samples.samtools": "String",
   "process_samples.vep": "String",
   "process_samples.vepdata": "String",
+  "process_samples.pear" : "String",
   "process_samples.assembly": "String",
 
   "##_COMMENT3": "OUTPUT AND PIPELINE OPTIONS",
@@ -20,7 +21,7 @@
 
   "##_COMMENT4": "SETTINGS AND THRESHOLDS",
   "process_samples.first_keep": "Int? (optional) default:31",
-  "process_samples.min_reads_per_umi": "Int? (optional) default: 10",
+  "process_samples.min_reads_per_umi": "Int? (optional) default: 5",
   "process_samples.min_coverage_per_umi": "Int? (optional) default: 5",
   "process_samples.min_agreement": "Float? (optional) default: 0.9",
   "process_samples.max_Ns_in_consensus": "Float? (optional) default: 0.1",

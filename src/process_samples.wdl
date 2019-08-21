@@ -12,6 +12,7 @@ workflow process_samples {
   File target
   String vep
   String vepdata
+  String pear
   String assembly
  
   String? bwa_options
@@ -69,6 +70,7 @@ workflow process_samples {
         min_coverage_per_umi = mincoverageperumi,
         min_agreement = minagreement,
         max_Ns_in_consensus = maxNsinconsensus,
+        pear = pear,
         max_template_length = maxtemplatelength
     }
   }

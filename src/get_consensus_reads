@@ -17,37 +17,6 @@ PADDING = 0
 class Options():
     pass
 
-def infer_read_len(cigar):
-    ops = re.findall('[\d]{0,}[A-Z]{1}', cigar)
-    alen = 0
-    for op in ops:
-        if op[-1] in ['M','D']:
-            alen += int(op[:-1])
-        assert op[-1] not in ['N','H','P','=','X','B']
-    return alen
-
-def ignore_alignment(aln, max_template_length):
-    """Should I ignore this alignment?"""
-    if aln.is_unmapped: return True
-    if aln.mate_is_unmapped: return True
-    if aln.is_secondary: return True
-    if aln.is_supplementary: return True
-    if aln.next_reference_id != aln.reference_id: return True
-    if abs(aln.template_length) > max_template_length: return True
-    return False
-
-def pair_overlaps(aln, start, end):
-    left = aln.pos
-    right = aln.aend
-    if left > end or right < start: return False
-
-    alen = infer_read_len(aln.get_tag('MC'))
-    left = aln.next_reference_start
-    right = aln.next_reference_start + alen
-    if left > end or right < start: return False
-
-    return True
-
 class Alignment:
     def __init__(self, aln):
         self.pos = aln.pos
@@ -138,89 +107,34 @@ class Consensus:
 
         return "".join(sequence)
 
-def overlaps(a, b):
-    if a[0] is None: return False
-    if a[0] != b[0]: return False
-    assert a[1] <= b[1], "%s :: %s" % (a, b)
-    if b[1] >= a[2]: return False
-    return True
-
 def process_interval(intervals):
     return _process_interval(*intervals)
 
-def count_per_umi(ignore_left, left, center, max_template_length, bamname,
-                  umi_indx):
-    bamfile = ps.AlignmentFile(bamname, 'r')
-    chrom, start, end = center
+def _process_interval(chrom, start, end, options):
     region = "%s:%d-%d" % (chrom, start, end)
 
+    # get all reads overlapping the region. Only include the reads that are
+    # within the region of interest on both sides. Using those reads, start
+    # building a consensus profile per umi
     umi_families = Counter()
-    num_reads = 0
-    reference_id = None
+    bamfile = ps.AlignmentFile(options.bamfile, 'r')
     for aln in bamfile.fetch(region=region):
-        # ignore alignment if it is unmapped, secondary, supp or insert length
-        # appears inconsistent with expecation
-        if ignore_alignment(aln, max_template_length): continue
-
-        if ignore_left:
-            # does this alignment and its pair align to the left region. If yes,
-            # the thread responsible for that region should process these.
-            assert left[0] == center[0]
-            if pair_overlaps(aln, left[1], left[2]): continue
-
-        # does this read and its pair overlap this region?
-        if pair_overlaps(aln, start, end) == False: continue
-
-        umi = aln.query_name.split(":")[umi_indx]
-        umi_families[umi] += 1      
-        num_reads += 1
-        if reference_id is None: reference_id = aln.reference_id
+        assert aln.is_unmapped == False
+        assert aln.is_secondary == False
+        assert aln.is_supplementary == False
+        assert aln.is_qcfail == False
+        if aln.pos < start or aln.aend > end: continue
+        umi = re.split('\:|\+', aln.query_name)[options.umi_indx]
+        umi_families[umi] += 1
     bamfile.close()
-    return umi_families
 
-def _process_interval(left, center, options):
-    ignore_left = overlaps(left, center)
-
-    # count the number of reads and pairs per umi
-    umi_families = count_per_umi(ignore_left, left, center, 
-                                 options.max_template_length,
-                                 options.bamfile, options.umi_indx)
-    for k,v in umi_families.items():
-        print >>stderr, k,v
-
-    # now process the region, and get the consensus sequence per umi
     family_counter = deepcopy(umi_families)
     consensus = {}
     sequences = []
-    num_aligned = 0
-    num_overlapping = 0
-    num_checked = 0
-
     bamfile = ps.AlignmentFile(options.bamfile, 'r')
-    chrom, start, end = center
-    region = "%s:%d-%d" % (chrom, start, end)
-
     for aln in bamfile.fetch(region=region):
-        # ignore alignment if it is unmapped, secondary, supp or insert length
-        # appears inconsistent with expecation
-        if ignore_alignment(aln, options.max_template_length): continue
-
-        if ignore_left:
-            # does this alignment and its pair align to the left region. If yes,
-            # the thread responsible for that region should process these.
-            assert left[0] == center[0]
-            if pair_overlaps(aln, left[1], left[2]): continue
-
-        # does this read and its pair overlap this region?
-        if pair_overlaps(aln, start, end) == False: continue
-
-        # lets get some statistics on our assumption
-        if (aln.next_reference_start > aln.reference_start):
-            num_checked += 1
-            if (aln.aend >= aln.next_reference_start):
-                num_overlapping += 1 
-
-        umi = aln.query_name.split(":")[options.umi_indx]
+        if aln.pos < start or aln.aend > end: continue
+        umi = re.split('\:|\+', aln.query_name)[options.umi_indx]
         if umi_families[umi] >= options.min_reads_per_umi:
             if umi not in consensus:
                 consensus[umi] = Consensus(start, end)
@@ -228,9 +142,6 @@ def _process_interval(left, center, options):
             family_counter[umi] -= 1
             if family_counter[umi] == 0:
                 seq = str(consensus[umi])
-                #print umi
-                #for k,v in consensus[umi].profile.items():
-                #    print k,v
                 counts = Counter(seq)
 
                 nfrac = 0.0
@@ -242,7 +153,6 @@ def _process_interval(left, center, options):
                 for k,v in consensus[umi].profile.items():
                     del[v]
                 del(consensus[umi])
-            num_aligned += 1
 
     del consensus        
     del umi_families 
@@ -268,7 +178,7 @@ def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
     # lets make sure we can identify the UMIs
     options.umi_indx = None
     for aln in ps.AlignmentFile(argo[0]):
-        tokens = aln.query_name.split(":")
+        tokens = re.split('\:|\+', aln.query_name)
         for indx, token in enumerate(tokens):
             if sum([x.isalpha() for x in token]) == len(token) == 16:
                 options.umi_indx = indx     
@@ -282,25 +192,18 @@ def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
             chrom, start, end, _ = line.strip().split()
             start = int(start) - PADDING
             end = int(end) + PADDING
-            intervals.append((chrom, start, end))
+            intervals.append((chrom, start, end, options))
     intervals.sort()
     
-    sets_of_interest = []
-    for i in range(0, len(intervals)):
-        if i == 0:
-            sets_of_interest.append(((None,None,None), intervals[i], options))
-        else:
-            sets_of_interest.append((intervals[i-1], intervals[i], options))
-   
     tmpfile = open(argo[2], "w")
     if num_threads == 1:
-        for sequences in map(process_interval, sets_of_interest):
+        for sequences in map(process_interval, intervals):
             for umi, seq in sequences:
                 print >> tmpfile, ">%s" % umi
                 print >> tmpfile, seq
     else: 
         pool = Pool(num_threads)
-        for sequences in pool.imap_unordered(process_interval, sets_of_interest):
+        for sequences in pool.imap_unordered(process_interval, intervals):
             for umi, seq in sequences:
                 print >> tmpfile, ">%s" % umi
                 print >> tmpfile, seq
@@ -332,7 +235,7 @@ def run(min_reads_per_umi, min_coverage_per_umi, min_agreement,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-r', action='store', type=int, default=10,
+    parser.add_argument('-r', action='store', type=int, default=5,
                         required=True, 
                         help='minimum number of reads per umi required')
     parser.add_argument('-c', action='store', type=int, default=5,
