@@ -10,10 +10,9 @@ workflow process_samples {
   String samtools
   String tmp_dir
   File target
-  String vep
-  String vepdata
   String pear
   String assembly
+  String snpeff
  
   String? bwa_options
   String bwaopts = select_first([bwa_options, "-Y"])
@@ -81,8 +80,7 @@ workflow process_samples {
       reference = reference,
       target = target,
       scriptdir = scriptdir,
-      vep = vep,
-      vepdata = vepdata,
+      snpeff = snpeff,
       assembly = assembly,
       bams = process_sample.output_bam,
       bais = process_sample.output_bai,
@@ -102,8 +100,7 @@ task identify_muts {
   String samtools
   String reference
   File target
-  String vep
-  String vepdata
+  String snpeff
   String assembly
     
   Int min_coverage_per_loci
@@ -120,12 +117,11 @@ task identify_muts {
     > variants.txt
 
     cat variants.txt \
-    | ${scriptdir}/prepare_for_vep > variants.vep.input.txt
+    | ${scriptdir}/prepare_for_snpeff > variants.snpeff.input.vcf
 
-    perl ${vep} -i variants.vep.input.txt --dir ${vepdata} \
-       --assembly ${assembly} --offline --symbol --canonical 
+    java -Xmx4G -jar ${snpeff} -i vcf -o vcf ${assembly} variants.snpeff.input.vcf > variant_effect_output.vcf
 
-    cat variant_effect_output.txt| ${scriptdir}/filter_vep_results > variants.ann.txt
+    cat variant_effect_output.vcf | ${scriptdir}/filter_snpeff_results > variants.ann.txt
   >>>
 
   output {

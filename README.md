@@ -34,10 +34,11 @@ Somatic events are required to be present in both replicates from the same speci
 1. BWA
 2. Sambamba
 3. SAMtools
-4. Variant Effect Predictor (including cache for genome of interest)
-5. Cromwell (https://github.com/broadinstitute/cromwell)
-6. Java
-7. Python
+4. PEAR (Paired-End reAd mergeR)
+5. snpEff
+6. Cromwell (https://github.com/broadinstitute/cromwell)
+7. Java
+8. Python
 
 ### Additional python libraries
 1. scipy

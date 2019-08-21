@@ -8,8 +8,7 @@
   "process_samples.sambamba": "String",
   "process_samples.mem_sambamba": "Int? (optional) default: 6",
   "process_samples.samtools": "String",
-  "process_samples.vep": "String",
-  "process_samples.vepdata": "String",
+  "process_samples.snpeff": "String",
   "process_samples.pear" : "String",
   "process_samples.assembly": "String",
 

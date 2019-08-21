@@ -4,7 +4,8 @@ from sys import stdin
 
 for line in stdin:
     tokens = line.strip().split()
-    if tokens[-1] == 'N': continue
+    if tokens[-1] == 'N':
+        continue
 
     chromosome = tokens[0]
     start = int(tokens[1])
@@ -20,19 +21,17 @@ for line in stdin:
         # deletion
         ref = reference + alternate[1:]
         alt = reference
-        allele = "%s/%s" % (ref, alt)
-        end = start + len(ref) - 1
     elif alternate.find("+") != -1:
         # insertion
         ref = reference
         alt = reference + alternate[1:]
-        allele = "%s/%s" % (ref, alt)
         start = end + 1
     else:
         # substitution
-        allele = "%s/%s" % (reference, alternate)
-    
-    identifier = "%s:%s:%d-%d:%s:%s" % (sample,chromosome,start,end,allele,VAF)
-    output = [chromosome, start, end, allele, "+", identifier]
+        ref = reference
+        alt = alternate
+
+    identifier = "%s:%s" % (sample, VAF)
+    output = [chromosome, start, ".", ref, alt, ".", ".", identifier]
 
     print "\t".join(map(str, output))

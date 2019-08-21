@@ -1,0 +1,40 @@
+#!/usr/bin/env python
+
+from sys import stdin
+
+for line in stdin:
+    if line.startswith("#"):
+        continue
+    tokens = line.strip().split('\t')
+    info = tokens[7].split(",")
+
+    chromosome = tokens[0]
+    start = tokens[1]
+    reference = tokens[3]
+    alternate = tokens[4]
+
+    end = start  # TODO: change end value if insertion or deletion
+
+    identifier, updated_info = info[0].split(";ANN=")
+    info[0] = updated_info
+    sample, vaf = identifier.split(":")
+
+    for annotation in info:
+        ann_tokens = annotation.split("|")
+        if ann_tokens[0] != alternate:
+            continue
+        consequence = ann_tokens[1]
+        gene = ann_tokens[3]
+        ensgene = ann_tokens[4]
+        transcript = ann_tokens[6]
+
+        canonical = "NO"  # TODO: add file with cannonical transcripts from snpEff -v
+        protein_position = ann_tokens[13].split("/")[0]
+        amino_acids = ann_tokens[10]  # TODO: convert from HGSV.p notation?
+        existing_variation = "-"  # TODO
+
+        output = [sample, chromosome, start, end, reference, alternate, consequence, gene,
+                  ensgene, transcript, protein_position, amino_acids, existing_variation,
+                  canonical, vaf]
+
+        print "\t".join(map(str, output))
