@@ -1,8 +1,8 @@
 # Mutation calling for Error-Corrected Sequencing
 
-An implementation of the bioinformatics methods detailed at https://www.jove.com/video/57509/rare-event-detection-using-error-corrected-dna-and-rna-sequencing to call variants from error corrected DNA sequences.
+An implementation of the bioinformatics recommendations detailed at https://www.jove.com/video/57509/rare-event-detection-using-error-corrected-dna-and-rna-sequencing to call variants from error-corrected DNA sequences.
 
-Multiple samples are sequenced to high coverage using targeted capture, and paired-end fastq files are generated for each of them. The following analysis is done on each one of them to generate a BAM file for each of them. The final SNP calls are generated based on the error-profile that is based on all the alignment files.
+Multiple samples are sequenced to high coverage using targeted capture, and paired-end fastq files are generated for each of them. The following analysis is done on each one of them to generate a BAM file for each of them. The final SNP calls are generated based on the error-profile that is based on **all** the alignment files.
 
 For each sample:
 * Trim off the first 30 nucleotides of each demultiplexed read to remove oligo sequences from the gene panel.
@@ -25,8 +25,10 @@ For each sample:
   = 1 - binomial(24, 35911, 0.000101759)
   = 2.26485E-13
 
-NOTE: For each genomic position queried, there would be three possible mutational changes (i.e.,A>T, A>C, A>G), and each of which would be represented as background artifact. Somatic events that are significantly different from the background after Bonferroni correction are retained. In the example shown in Table 1, the number of tests performed was 11, hence a Bonferroni corrected p-value ≤0.00454545 (0.05/11) was required to call an event as statistically significant.
-Somatic events are required to be present in both replicates from the same specimen; otherwise, regard them as false positives.
+NOTE: 
+* For each genomic position queried, there would be three possible mutational changes (i.e.,A>T, A>C, A>G), and each of which would be represented as background artifact. Somatic events that are significantly different from the background after Bonferroni correction are retained. In the example shown in Table 1, the number of tests performed was 11, hence a Bonferroni corrected p-value ≤0.00454545 (0.05/11) was required to call an event as statistically significant.
+
+* Somatic events are required to be present in both replicates from the same specimen; otherwise, regard them as false positives.
 
 ## Requirements
 
