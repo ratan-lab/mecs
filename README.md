@@ -1,3 +1,5 @@
+Ultra-low frequency DNA mutations are confounded with technical artifacts. Unique molecular identifiers (UMIs) can be used to call these variants with confidence. However, errors before UMI tagging, such as DNA polymerase errors during end repair and the first PCR cycle cannot be corrected with single-strand UMIs and are a fundamental limitation to UMI-based variant calling.
+
 # Mutation calling for Error-Corrected Sequencing
 
 An implementation of the bioinformatics recommendations detailed at https://www.jove.com/video/57509/rare-event-detection-using-error-corrected-dna-and-rna-sequencing to call variants from error-corrected DNA sequences.
